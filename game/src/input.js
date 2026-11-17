@@ -1,53 +1,101 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Solano Heat — keyboard and mouse state. The game polls this once per fixed step:
+// `down` is level-triggered (held), `hit` is edge-triggered (pressed since the last
+// step) and both feed from one press queue that endFrame clears after each step, so
+// a tap is seen exactly once however the frame rate wobbles. `hit` also answers to
+// action names — 'interact', 'pause', 'map', 'help', 'reload' — so the game's
+// state machine reads in intentions while the player code reads raw keys.
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+// The named actions and the physical keys that trigger them.
+const ACTIONS = {
+  interact: ['KeyE'],
+  pause: ['KeyP', 'Escape'],
+  map: ['KeyM'],
+  help: ['KeyH'],
+  reload: ['KeyR'],
+};
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+export class Input {
+  constructor(canvas) {
+    this.keys = new Set(); // codes currently held
+    this.pressed = new Set(); // codes pressed since the last endFrame
+    this.mouseX = 0;
+    this.mouseY = 0;
+    this.mouseDown = false;
+    this.mouseClicked = false; // a fresh click since the last endFrame
+    this.enabled = true;
 
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
+    window.addEventListener('keydown', (ev) => {
+      if (ev.repeat) return;
+      this.keys.add(ev.code);
+      this.pressed.add(ev.code);
+      // Keep the page itself still: the game owns these keys.
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(ev.code)) {
+        ev.preventDefault();
+      }
+    });
+    window.addEventListener('keyup', (ev) => {
+      this.keys.delete(ev.code);
+    });
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.mouseDown = false;
+    });
+    canvas.addEventListener('mousemove', (ev) => {
+      const rect = canvas.getBoundingClientRect();
+      this.mouseX = ev.clientX - rect.left;
+      this.mouseY = ev.clientY - rect.top;
+    });
+    canvas.addEventListener('mousedown', (ev) => {
+      const rect = canvas.getBoundingClientRect();
+      this.mouseX = ev.clientX - rect.left;
+      this.mouseY = ev.clientY - rect.top;
+      if (ev.button !== 0) return;
+      this.mouseDown = true;
+      this.mouseClicked = true;
+    });
+    window.addEventListener('mouseup', (ev) => {
+      if (ev.button === 0) this.mouseDown = false;
+    });
+    canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
+  }
 
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
+  /** True while any of the given key codes is held. */
+  down(...codes) {
+    return codes.some((c) => this.keys.has(c));
+  }
 
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+  /** True on the step a press begins. Accepts key codes or action names. */
+  hit(...names) {
+    return names.some((n) => (ACTIONS[n] ?? [n]).some((c) => this.pressed.has(c)));
+  }
+
+  /** Forget a press, so a second system does not act on the same tap. */
+  consume(...codes) {
+    for (const c of codes) this.pressed.delete(c);
+  }
+
+  /** Take the pending click, if any: true exactly once per physical click. */
+  consumeClick() {
+    const clicked = this.mouseClicked;
+    this.mouseClicked = false;
+    return clicked;
+  }
+
+  /** Movement axes from the keys: x right, y down, each in -1..1. */
+  axes() {
+    let x = 0;
+    let y = 0;
+    if (this.down('KeyA', 'ArrowLeft')) x -= 1;
+    if (this.down('KeyD', 'ArrowRight')) x += 1;
+    if (this.down('KeyW', 'ArrowUp')) y -= 1;
+    if (this.down('KeyS', 'ArrowDown')) y += 1;
+    return { x, y };
+  }
+
+  /** Clear the per-step press queue. Called once after every fixed step. The
+   *  pending click is NOT cleared here — menus consume it via consumeClick, and
+   *  a step must never eat a click meant for the frame's menu pass. */
+  endFrame() {
+    this.pressed.clear();
+  }
 }
