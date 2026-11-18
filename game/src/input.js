@@ -1,53 +1,92 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Keyboard and mouse state, sampled by the game loop.
+// The loop reads `input.moveX/moveY`; edge-triggered presses are consumed
+// with take(), and the mouse is tracked in canvas coordinates (the loop
+// adds the camera offset to get world coordinates for aiming).
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+const TRACKED = new Set([
+  'KeyW', 'KeyA', 'KeyS', 'KeyD',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'ShiftLeft', 'ShiftRight', 'Space',
+  'KeyE', 'KeyF', 'KeyR', 'KeyM', 'KeyP', 'Escape', 'Enter',
+]);
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+export class Input {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.keys = new Set();
+    this.pressed = new Set();   // codes that went down since last take()
+    this.mouseX = 0;
+    this.mouseY = 0;
+    this.mouseDown = false;
+    this.mouseClicked = false;  // went down since last frame
+    this.enabled = true;
 
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
+    window.addEventListener('keydown', (ev) => {
+      if (!this.enabled) return;
+      if (TRACKED.has(ev.code)) ev.preventDefault();
+      if (!ev.repeat) this.pressed.add(ev.code);
+      this.keys.add(ev.code);
+    });
+    window.addEventListener('keyup', (ev) => {
+      this.keys.delete(ev.code);
+    });
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.mouseDown = false;
+    });
+    canvas.addEventListener('mousemove', (ev) => {
+      const rect = canvas.getBoundingClientRect();
+      this.mouseX = ((ev.clientX - rect.left) / rect.width) * canvas.width;
+      this.mouseY = ((ev.clientY - rect.top) / rect.height) * canvas.height;
+    });
+    canvas.addEventListener('mousedown', (ev) => {
+      if (ev.button === 0) {
+        this.mouseDown = true;
+        this.mouseClicked = true;
+      }
+    });
+    window.addEventListener('mouseup', (ev) => {
+      if (ev.button === 0) this.mouseDown = false;
+    });
+    canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
+  }
 
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
+  down(code) { return this.keys.has(code); }
 
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+  /** Edge trigger: true once per physical press until consumed. */
+  take(code) {
+    if (this.pressed.has(code)) {
+      this.pressed.delete(code);
+      return true;
+    }
+    return false;
+  }
+
+  /** Consume the "mouse clicked this frame" flag. */
+  takeClick() {
+    const was = this.mouseClicked;
+    this.mouseClicked = false;
+    return was;
+  }
+
+  /** -1..1 movement axes from WASD / arrows. */
+  get moveX() {
+    return (this.down('KeyD') || this.down('ArrowRight') ? 1 : 0)
+         - (this.down('KeyA') || this.down('ArrowLeft') ? 1 : 0);
+  }
+
+  get moveY() {
+    return (this.down('KeyS') || this.down('ArrowDown') ? 1 : 0)
+         - (this.down('KeyW') || this.down('ArrowUp') ? 1 : 0);
+  }
+
+  get sprint() {
+    return this.down('ShiftLeft') || this.down('ShiftRight');
+  }
+
+  /** Forget all pending edge triggers (used on mode changes). */
+  flush() {
+    this.pressed.clear();
+    this.mouseClicked = false;
+  }
 }

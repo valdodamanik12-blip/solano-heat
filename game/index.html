@@ -1,19 +1,166 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
+<title>SOLANO HEAT — an open-world crime game</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  :root {
+    --amber: #ffb703;
+    --ink: #10151b;
+    --panel: rgba(13, 18, 24, 0.78);
+    --line: rgba(255, 183, 3, 0.55);
+    --text: #f4f1ea;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #0a0e13; color: var(--text);
+    font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #wrap {
+    position: relative; width: min(100vw, 177.78vh); margin: 0 auto;
+    aspect-ratio: 16 / 9; top: 50vh; transform: translateY(-50%);
+  }
+  canvas#game { width: 100%; height: 100%; display: block; background: #14586e; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(3px);
+  }
+  #hud-top {
+    position: absolute; top: 12px; left: 12px; display: flex; gap: 10px; align-items: stretch;
+    pointer-events: none;
+  }
+  #hud-money { font-size: 24px; font-weight: 800; color: #7bd88a; min-width: 110px; }
+  #hud-hp { width: 170px; }
+  #hud-hp-bar { height: 10px; background: #2b3238; border-radius: 5px; overflow: hidden; margin-top: 4px; }
+  #hud-hp-fill { height: 100%; width: 100%; background: #57cc5e; transition: width 0.15s; }
+  #hud-hp-label { font-size: 11px; letter-spacing: 0.12em; opacity: 0.85; display: flex; justify-content: space-between; }
+  #hud-heat { font-size: 22px; color: #ffd60a; letter-spacing: 2px; min-width: 118px; text-align: center; }
+  #hud-heat.hot { color: #ff5964; text-shadow: 0 0 12px rgba(255, 60, 60, 0.8); }
+  #hud-ammo { font-size: 15px; font-weight: 700; letter-spacing: 0.06em; align-self: center; }
+  #hud-objective {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    max-width: 46%; text-align: center; font-size: 15px; line-height: 1.35; pointer-events: none;
+  }
+  #hud-toast {
+    position: absolute; bottom: 118px; left: 50%; transform: translateX(-50%) translateY(8px);
+    max-width: 62%; text-align: center; font-size: 17px; font-style: italic;
+    opacity: 0; transition: opacity 0.25s, transform 0.25s; pointer-events: none;
+  }
+  #hud-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #hud-prompt {
+    position: absolute; bottom: 84px; left: 50%; transform: translateX(-50%);
+    font-size: 16px; font-weight: 700; display: none; pointer-events: none;
+  }
+  #hud-prompt b { color: var(--amber); }
+  #hud-bust {
+    position: absolute; bottom: 150px; left: 50%; transform: translateX(-50%);
+    width: 260px; display: none; pointer-events: none; text-align: center;
+    font-size: 12px; letter-spacing: 0.2em; color: #ff8080;
+  }
+  #hud-bust-bar { height: 8px; background: #2b3238; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+  #hud-bust-fill { height: 100%; width: 0%; background: #e63946; }
+  #minimap {
+    position: absolute; left: 12px; bottom: 12px; width: 196px; height: 160px;
+    border: 1px solid var(--line); border-radius: 10px; background: #20262b;
+  }
+  #hud-help {
+    position: absolute; right: 12px; bottom: 12px; font-size: 12px; line-height: 1.7;
+    opacity: 0.92; pointer-events: none; text-align: right;
+  }
+  .overlay {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: radial-gradient(ellipse at center, rgba(10, 14, 19, 0.55), rgba(10, 14, 19, 0.92));
+    z-index: 5;
+  }
+  .overlay h1 {
+    font-size: 74px; margin: 0; letter-spacing: 0.08em; font-weight: 900;
+    color: var(--amber); text-shadow: 0 4px 0 #7a4d00, 0 10px 34px rgba(0,0,0,0.7);
+  }
+  .overlay h2 { font-size: 34px; margin: 0 0 8px; letter-spacing: 0.14em; color: var(--amber); }
+  .overlay p { max-width: 560px; line-height: 1.55; font-size: 16px; margin: 6px 0 18px; }
+  .overlay .btns { display: flex; gap: 14px; }
+  button {
+    font: inherit; font-weight: 800; letter-spacing: 0.06em; cursor: pointer;
+    background: var(--amber); color: #201503; border: 0; border-radius: 10px;
+    padding: 12px 26px; font-size: 17px;
+  }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:hover { filter: brightness(1.1); }
+  .controls {
+    margin-top: 26px; font-size: 13.5px; line-height: 1.9; opacity: 0.9;
+    display: grid; grid-template-columns: auto auto; gap: 0 18px; text-align: left;
+  }
+  .controls b { color: var(--amber); font-weight: 700; }
+  .hidden { display: none !important; }
+  #flash-word {
+    font-size: 84px; font-weight: 900; letter-spacing: 0.2em; color: #e63946;
+    text-shadow: 0 6px 30px rgba(0,0,0,0.8);
+  }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
-<script type="module" src="./src/main.js"></script>
+<div id="wrap">
+  <canvas id="game" width="1280" height="720"></canvas>
+
+  <div id="hud-top">
+    <div class="panel" id="hud-money">$0</div>
+    <div class="panel" id="hud-hp">
+      <div id="hud-hp-label"><span>HEALTH</span><span id="hud-hp-text">100</span></div>
+      <div id="hud-hp-bar"><div id="hud-hp-fill"></div></div>
+    </div>
+    <div class="panel" id="hud-heat">☆☆☆☆☆</div>
+    <div class="panel" id="hud-ammo" style="display:none"></div>
+  </div>
+
+  <div class="panel" id="hud-objective"></div>
+  <div class="panel" id="hud-toast"></div>
+  <div id="hud-bust">BUSTED<div id="hud-bust-bar"><div id="hud-bust-fill"></div></div></div>
+  <div class="panel" id="hud-prompt"></div>
+  <canvas id="minimap" width="196" height="160"></canvas>
+  <div class="panel" id="hud-help">
+    <b>WASD</b> move / drive &nbsp; <b>E</b> enter · exit · talk<br>
+    <b>F</b> punch / respray at garage &nbsp; <b>Click</b> shoot &nbsp; <b>R</b> reload &nbsp; <b>Shift</b> sprint<br>
+    <b>P</b> pause &nbsp; <b>M</b> mute &nbsp; <b>Mouse</b> aim
+  </div>
+
+  <div class="overlay" id="screen-title">
+    <h1>SOLANO HEAT</h1>
+    <p>Solano Bay is rich, warm, and thoroughly corrupt. Fixer <b>Dario Klem</b> has work,
+       the docks have cars worth taking, and the Bay PD has opinions. Run the five-job chain,
+       keep the heat off your back, and get out richer than you arrived.</p>
+    <div class="btns">
+      <button id="btn-new">NEW GAME</button>
+      <button id="btn-continue" class="secondary">CONTINUE</button>
+    </div>
+    <div class="controls">
+      <span><b>WASD / Arrows</b></span><span>Walk and drive</span>
+      <span><b>E</b></span><span>Steal / enter / exit car, talk to Dario</span>
+      <span><b>F or Space</b></span><span>Punch (in a car at the garage: respray)</span>
+      <span><b>Mouse + Click</b></span><span>Aim and fire the pistol</span>
+      <span><b>R</b></span><span>Reload</span>
+      <span><b>Shift</b></span><span>Sprint</span>
+      <span><b>P / Esc</b></span><span>Pause</span>
+      <span><b>M</b></span><span>Mute</span>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="screen-pause">
+    <h2>PAUSED</h2>
+    <p id="pause-stats"></p>
+    <div class="btns">
+      <button id="btn-resume">RESUME</button>
+      <button id="btn-restart" class="secondary">RESTART RUN</button>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="screen-flash">
+    <div id="flash-word">WASTED</div>
+    <p id="flash-detail"></p>
+  </div>
+</div>
+<script type="module" src="src/main.js"></script>
 </body>
 </html>
